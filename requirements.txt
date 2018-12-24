@@ -1,0 +1,5 @@
+rx
+#ruuvitag-sensor can't have ruuvitag-sensor here, because it depends on psutil, but we don't need that, and building n alpine would be a pain
+hbmqtt
+influxdb
+
