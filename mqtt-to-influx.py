@@ -21,18 +21,6 @@ parser.add_argument('--mapping-file', dest='mapping_file', action='store', defau
                     help="File to read MAC mappings from, defaults to stdin")
 args = parser.parse_args()
 
-mapping_file_name = args.mapping_file
-if mapping_file_name == '-':
-    mappings = sys.stdin.read()
-else:
-    with open(mapping_file_name, 'r') as file:
-        mappings = file.read()
-try:
-    NAMES = json.loads(mappings)
-    print(NAMES)
-except Exception as e:
-    print("Unable to load mappings", mappings, file=sys.stderr)
-    NAMES = {}
 
 def convert_to_influx(receiver_mac, mac, payload):
     return {
@@ -54,14 +42,9 @@ def convert_to_influx(receiver_mac, mac, payload):
         }
     }
 
-influx_client = InfluxDBClient(host=os.environ.get("INFLUXDB_HOST","localhost"), port=int(os.environ.get("INFLUXDB_PORT", "8086")), database="tag_data", timeout=10)
-try:
-    influx_client.create_database('tag_data')
-except Exception as e:
-    print("Unable to create database", e, file=sys.stderr)
 
 ignored_macs = set()
-def handle_message(receiver_mac, mac, rssi, data, raw_msg):
+def handle_message(influx_client, receiver_mac, mac, rssi, data, raw_msg):
     if data is None:
         if mac not in ignored_macs:
             print("Got null data from %s" % mac, raw_msg)
@@ -92,13 +75,15 @@ def handle_message(receiver_mac, mac, rssi, data, raw_msg):
             influx_client.write_points([json_body])
 
 
-mqtt_url = os.environ.get("MQTT_URL", "mqtt://localhost/")
-mqtt_topic = os.environ.get("MQTT_TOPIC", "/home/ble-deduped")
-
-client = MQTTClient()
 
 last_receive_timestamp = time.time()
-async def main():
+async def main(influx_client):
+    mqtt_url = os.environ.get("MQTT_URL", "mqtt://localhost/")
+    mqtt_topic = os.environ.get("MQTT_TOPIC", "/home/ble-deduped")
+
+    client = MQTTClient()
+
+    print("Connecting", mqtt_url)
     global last_receive_timestamp
     try:
         await client.connect(mqtt_url)
@@ -122,7 +107,7 @@ async def main():
             data = bytes(data, 'iso-8859-1') # it was encoded as codepoints for transport over JSON
 
         # TODO Should be async, but doesn't matter much with a handful of ruuvitags
-        handle_message(receiver_mac, mac, rssi, data, ble_msg)
+        handle_message(influx_client, receiver_mac, mac, rssi, data, ble_msg)
         last_receive_timestamp = time.time()
 
 
@@ -140,6 +125,31 @@ async def watchdog():
 
         await asyncio.sleep(1)
 
-asyncio.ensure_future(watchdog())
-asyncio.ensure_future(main())
-asyncio.get_event_loop().run_forever()
+def init(_NAMES):
+    global NAMES
+    NAMES = _NAMES
+    influx_client = InfluxDBClient(host=os.environ.get("INFLUXDB_HOST","localhost"), port=int(os.environ.get("INFLUXDB_PORT", "8086")), database="tag_data", timeout=10)
+    try:
+        influx_client.create_database('tag_data')
+    except Exception as e:
+        print("Unable to create database", e, file=sys.stderr)
+
+    asyncio.ensure_future(watchdog())
+    asyncio.ensure_future(main(influx_client))
+    asyncio.get_event_loop().run_forever()
+
+if __name__ == '__main__':
+    mapping_file_name = args.mapping_file
+    if mapping_file_name == '-':
+        mappings = sys.stdin.read()
+    else:
+        with open(mapping_file_name, 'r') as file:
+            mappings = file.read()
+    try:
+        NAMES = json.loads(mappings)
+        print(NAMES)
+    except Exception as e:
+        print("Unable to load mappings", mappings, file=sys.stderr)
+        NAMES = {}
+    init(NAMES)
+
