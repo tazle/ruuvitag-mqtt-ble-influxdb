@@ -1,7 +1,4 @@
-#hbmqtt requires older websockets
-websockets==8.1
-#can't have ruuvitag-sensor here, because it depends on psutil, but we don't need that, and building n alpine would be a pain
 ruuvitag-sensor
-hbmqtt
+amqtt
 influxdb
 
